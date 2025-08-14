@@ -34,9 +34,9 @@ class IncomeTaxCalculator(BaseTaxCalculator):
                     
                     breakdown.append({
                         "bracket": f"{min_amount}-{max_amount if max_amount else 'above'}",
-                        "rate": f"{rate*100}%",
-                        "taxable_amount": actual_taxable,
-                        "tax": bracket_tax
+                        "rate": f"{rate*100:.2f}%",
+                        "taxable_amount": f"{actual_taxable:.2f}",
+                        "tax": f"{bracket_tax:.2f}"
                     })
                     
                     remaining_amount -= actual_taxable

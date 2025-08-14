@@ -6,6 +6,7 @@ import uuid
 from datetime import date
 from typing import List, Optional, Dict, Any
 
+from src.application.mappers.tax_rule_mapper import TaxRuleMapper
 from src.application.services.SalesTaxCalculator import SalesTaxCalculator
 from src.application.services.income_tax_calculator import IncomeTaxCalculator
 from src.presentation.api.v1.schemas.response.tax_calculation_response import TaxCalculationResponse
@@ -42,78 +43,40 @@ class TaxCalculationService:
             "sales_tax": SalesTaxCalculator()
         }
     
+
     async def calculate_tax(
         self,
-        amount, 
-        rule_type
+        amount: float,
+        rule_type: str
     ) -> TaxCalculationResponse:
         try:
-        
             tax_data = self.tax_rule_repository.get_active_tax_rule(rule_type)
-            rule_data = tax_data["tax_rule"]
 
-            if not rule_data:
+            if not tax_data or not tax_data.get("tax_rule"):
                 raise BusinessException(f"No applicable tax rule found for {rule_type}")
-            
-            result = self.calculate_tax_by_rule_type(amount, rule_type, rule_data)
 
-            taxCalculationResponse =  TaxCalculationResponse(
-                income=amount,
-                tax_amount=result["tax_amount"],
-                rule_version=tax_data["version"],
-                breakdown=result["breakdown"]
-            )
+            result = self.calculate_tax_by_rule_type(amount, rule_type, tax_data["tax_rule"])
+            return TaxRuleMapper.to_tax_calculation_response(amount, result, tax_data["version"])
 
-            return taxCalculationResponse
-
-        
-        except ValidationException:
-            raise
-        except BusinessException:
+        except (ValidationException, BusinessException):
             raise
         except Exception as e:
             raise BusinessException(f"Tax calculation failed: {str(e)}")
-    
-    async def get_active_tax_rule(
-        self, tax_type
-    ) -> List[TaxRule]:
+
+    async def get_active_tax_rule(self, tax_type: str) -> TaxRule:
         try:
-            
-            tax_rule = self.tax_rule_repository.get_active_tax_rule(tax_type)
-  
-            return TaxRule(
-                    id= tax_rule["id"],
-                    rule_type=tax_rule["rule_type"],
-                    version= tax_rule["version"],
-                    tax_rule=tax_rule["tax_rule"],
-                    is_active=tax_rule["is_active"]
-                )
-                
-            
+            data = self.tax_rule_repository.get_active_tax_rule(tax_type)
+            return TaxRuleMapper.from_dict(data)
         except Exception as e:
             raise BusinessException(f"Failed to retrieve rule versions: {str(e)}")
-        
-    async def get_available_rules(
-        self
-    ) -> List[TaxRule]:
+
+    async def get_available_rules(self) -> List[TaxRule]:
         try:
-            
-            tax_rules = self.tax_rule_repository.get_all_versions()
-  
-            return [
-                TaxRule(
-                    id= r["id"],
-                    rule_type=r["rule_type"],
-                    version= r["version"],
-                    tax_rule=r["tax_rule"],
-                    is_active=r["is_active"]
-                )
-                for r in tax_rules
-            ]
-            
+            data_list = self.tax_rule_repository.get_all_versions()
+            return [TaxRuleMapper.from_dict(d) for d in data_list]
         except Exception as e:
             raise BusinessException(f"Failed to retrieve rule versions: {str(e)}")
-        
+
     async def create_tax_rule(
         self,
         rule_type: str,
@@ -134,32 +97,17 @@ class TaxCalculationService:
                 "created_by": created_by,
                 "updated_by": created_by
             }
-
-            new_rule_model = self.tax_rule_repository.create_rule(rule_data)
-            new_rule = TaxRule(
-                id= new_rule_model["id"],
-                rule_type=new_rule_model["rule_type"],
-                version= new_rule_model["version"],
-                tax_rule=new_rule_model["tax_rule"],
-                is_active=new_rule_model["is_active"]
-                             
-            )
-            return new_rule
-            
-        except ValidationException:
-            raise
-        except BusinessException:
+            created = self.tax_rule_repository.create_rule(rule_data)
+            return TaxRuleMapper.from_dict(created)
+        except (ValidationException, BusinessException):
             raise
         except Exception as e:
             raise BusinessException(f"Tax rule adding failed: {str(e)}")
 
     def calculate_tax_by_rule_type(self, amount: float, rule_type: str, rule_data: Dict[str, Any]):
-        """Dispatch to appropriate tax calculation method based on rule type"""
         calculator = self.calculators.get(rule_type)
         if not calculator:
             raise BusinessException(f"Calculator not implemented for rule type '{rule_type}'")
-
         if not hasattr(calculator, "calculate"):
             raise BusinessException(f"Calculator for '{rule_type}' has no 'calculate' method")
-
         return calculator.calculate(amount, rule_data)
