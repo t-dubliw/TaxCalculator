@@ -27,36 +27,33 @@ This tax calculation engine is designed for the following scenario: annual tax c
 
 ### Local Development Setup
 
-**Option 1 - using the source code**
+**Option 1 - using Docker: Rocommended**
+
+Prerequisites: Make sure to have docker installed.
+
+1. Create a docker network
+```
+docker network create taxcalc-net
+```
+2. Go to the root folder (parent of src folder), and execute the following commands:
+```
+docker build -t taxcalc:dev -f deployments/docker/Dockerfile --target development .
+
+docker run -d --name taxcalc-postgres --network taxcalc-net -e POSTGRES_USER=myuser -e POSTGRES_PASSWORD=mypasswor -e POSTGRES_DB=tax_residency_db -p 6543:5432 -v postgres_data:/var/lib/postgresql/data postgres:15
+
+docker run -d --name taxcalc-fastapi --network taxcalc-net -p 8000:8000 -e DB_TYPE=postgresql -e DB_HOST=taxcalc-postgres -e DB_PORT=5432 -e DB_NAME=tax_residency_db -e DB_USER=myuser -e DB_PASSWORD=mypasswor taxcalc:dev
+```
+3. To view Swagger docs, check this url on a browser
+```http://127.0.0.1:8000/docs#```
+
+
+**Option 2 - using the source code**
 1. Go to the src directory using terminal
 2. Install dependencies (Requirements.txt)
 3. Run PostgreSQL (either existing or docker)
 ```
 docker run -d --name tax_residency_db_container -e POSTGRES_DB=tax_residency_db -e POSTGRES_USER=myuser -e POSTGRES_PASSWORD=mypassword -p 6543:5432 postgres:15
 ```
-
-
-**Option 2 - using the source code**
-
-
-```
-docker network create taxcalc-net
-
-docker build -t taxcalc:dev -f deployments/docker/Dockerfile --target development .
-
-docker run -d --name taxcalc-postgres --network taxcalc-net -e POSTGRES_USER=myuser -e POSTGRES_PASSWORD=mypasswor -e POSTGRES_DB=tax_residency_db -p 6543:5432 -v postgres_data:/var/lib/postgresql/data postgres:15
-
-docker run -d --name taxcalc-fastapi --network taxcalc-net -p 8000:8000 -e DB_TYPE=postgresql -e DB_HOST=taxcalc-postgres -e DB_PORT=5432 -e DB_NAME=tax_residency_db -e DB_USER=myuser -e DB_PASSWORD=mypasswor taxcalc:dev
-
-#windows
-docker run -d --name taxcalc-fastapi --network taxcalc-net -p 8000:8000 -v ${PWD}/src:/app/src -v ${PWD}/config:/app/config -e DB_TYPE=postgresql -e DB_HOST=taxcalc-postgres -e DB_PORT=5432 -e DB_NAME=tax_residency_db -e DB_USER=myuser -e DB_PASSWORD=mypasswor taxcalc:dev
-
-#Linux
-docker run -d --name taxcalc-fastapi --network taxcalc-net -p 8000:8000 -v $(pwd)/src:/app/src -v $(pwd)/config:/app/config -e DB_TYPE=postgresql -e DB_HOST=taxcalc-postgres -e DB_PORT=5432 -e DB_NAME=tax_residency_db -e DB_USER=myuser -e DB_PASSWORD=mypasswor taxcalc:dev
-
-
-```
-
 4. Setup DB variables in ```\config\environments``` 
 
 ```DB_TYPE=postgresql
@@ -67,15 +64,12 @@ DB_USER=myuser
 DB_PASSWORD=mypassword
 ```
 
-4. Run command 
+5. Run command 
 ```uvicorn src.main:app --reload --host 0.0.0.0 --port 8000```
 
-5. To view Swagger docs
+6. To view Swagger docs
 ```http://127.0.0.1:8000/docs#```
 
-**Option 2 - using Docker**
-
-``` Will update soon```
 
 **Built using FastAPI, SQLAlchemy, and PostgreSQL**
 
