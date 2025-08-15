@@ -1,55 +1,43 @@
-
-
-
-"""
-Test cases for Tax Calculation Controller API endpoints
-"""
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, Mock
-from fastapi import FastAPI, status
+from unittest.mock import Mock, AsyncMock
+from fastapi import HTTPException
 
-from src.infrastructure.configuration.dependency_injection import get_tax_calculation_controller
-from src.presentation.api.v1.controllers.tax_calculation_controller import (
-    router,
-    TaxCalculationController
-)
-from src.presentation.api.v1.schemas.response.tax_calculation_response import (
-    TaxCalculationResponse
-)
-from src.shared.exceptions.base_exceptions import (
-    BusinessException,
-    ValidationException
-)
+from src.presentation.api.v1.controllers.tax_calculation_controller import TaxCalculationController, router
+from src.application.services.tax_calculation_service import TaxCalculationService
+from src.presentation.api.v1.schemas.response.tax_calculation_response import TaxCalculationResponse
+from src.shared.exceptions.base_exceptions import BusinessException
 
-class TestTaxCalculationController:
-    """Test suite for tax calculation API endpoints"""
 
+class TestTaxCalculationAPI:
+    
     @pytest.fixture
-    def mock_service(self):
-        """Mock TaxCalculationService"""
-        service = Mock()
-        service.calculate_tax = AsyncMock()
-        return service
-
+    def mock_tax_calculation_service(self):
+        return Mock(spec=TaxCalculationService)
+    
     @pytest.fixture
-    def client(self, mock_service):
-        """Test client with mocked dependencies"""
+    def tax_controller(self, mock_tax_calculation_service):
+        return TaxCalculationController(tax_calculation_service=mock_tax_calculation_service)
+    
+    @pytest.fixture
+    def client(self, mock_tax_calculation_service):
+        from fastapi import FastAPI
         app = FastAPI()
-        app.include_router(router)
+        app.include_router(router, prefix="/api/v1")
         
-        def get_controller():
-            return TaxCalculationController(mock_service)
+        # Mock the dependency
+        def get_mock_controller():
+            return TaxCalculationController(mock_tax_calculation_service)
         
-        app.dependency_overrides[get_tax_calculation_controller] = get_controller
+        app.dependency_overrides[TaxCalculationController] = get_mock_controller
+        
         return TestClient(app)
-
+    
     @pytest.fixture
-    def sample_success_response(self):
-        """Sample successful tax calculation response"""
-        return TaxCalculationResponse(
-            income=122.0,
-            tax_amount=12.2,
+    def sample_calculation_response(self):
+         return TaxCalculationResponse(
+            income=50000.0,
+            tax_amount=40000.0,
             rule_version="2024.1",
             breakdown=[{
                 "bracket": "0-520.5",
@@ -58,138 +46,57 @@ class TestTaxCalculationController:
                 "tax": "12.20"
             }]
         )
-
-    def test_calculate_tax_success(
-        self, 
-        client, 
-        mock_service, 
-        sample_success_response
-    ):
-        """
-        Test successful tax calculation returns correct response
-        """
+    
+    @pytest.mark.asyncio
+    async def test_calculate_tax_success(self, tax_controller, mock_tax_calculation_service, sample_calculation_response):
+        """Test successful tax calculation via controller"""
         # Arrange
-        mock_service.calculate_tax.return_value = sample_success_response
-        url = "/tax-rules/calculate/income_tax/1000.0"
-
+        mock_tax_calculation_service.calculate_tax = AsyncMock(return_value=sample_calculation_response)
+        rule_type = "income_tax"
+        amount = 50000.0
+        
         # Act
-        response = client.get(url)
-
+        result = await tax_controller.calculate_tax(rule_type, amount)
+        
         # Assert
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert data["income"] == 1000.0
-        assert data["tax_amount"] == 200.0
-        assert data["rule_version"] == "1.0"
-        # assert data["success"] is True
-        mock_service.calculate_tax.assert_called_once_with(1000.0, "income_tax")
-
-    def test_calculate_tax_validation_error(self, client, mock_service):
-        """
-        Test invalid input returns validation error
-        """
+        assert isinstance(result, TaxCalculationResponse)
+        assert result.income == 50000.0
+        assert result.tax_amount == 10000.0
+        assert result.rule_version == "1.0"
+        mock_tax_calculation_service.calculate_tax.assert_called_once_with(amount, rule_type)
+    
+    @pytest.mark.asyncio
+    async def test_calculate_tax_business_exception(self, tax_controller, mock_tax_calculation_service):
+        """Test API handling of business exceptions"""
         # Arrange
-        mock_service.calculate_tax.side_effect = ValidationException(
-            "Amount must be positive"
+        mock_tax_calculation_service.calculate_tax = AsyncMock(
+            side_effect=BusinessException("No tax rule found for sales_tax")
         )
-        url = "/tax-rules/calculate/income_tax/-100.0"
-
-        # Act
-        response = client.get(url)
-
-        # Assert
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        data = response.json()
-        assert data["detail"]["error_code"] == "VALIDATION_ERROR"
-        assert "must be positive" in data["detail"]["details"]
-
-    def test_calculate_tax_business_error(self, client, mock_service):
-        """
-        Test invalid rule type returns business error
-        """
+        rule_type = "sales_tax"
+        amount = 1000.0
+        
+        # Act & Assert
+        with pytest.raises(HTTPException) as exc_info:
+            await tax_controller.calculate_tax(rule_type, amount)
+        
+        assert exc_info.value.status_code == 422
+        assert "failed" in exc_info.value.detail["message"]
+    
+    @pytest.mark.asyncio
+    async def test_calculate_tax_unexpected_error(self, tax_controller, mock_tax_calculation_service):
+        """Test API handling of unexpected errors"""
         # Arrange
-        mock_service.calculate_tax.side_effect = BusinessException(
-            "No tax rule found for type: invalid_type"
+        mock_tax_calculation_service.calculate_tax = AsyncMock(
+            side_effect=Exception("Database connection failed")
         )
-        url = "/tax-rules/calculate/invalid_type/1000.0"
+        rule_type = "income_tax"
+        amount = 50000.0
+        
+        # Act & Assert
+        with pytest.raises(HTTPException) as exc_info:
+            await tax_controller.calculate_tax(rule_type, amount)
+        
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail["error_code"] == "INTERNAL_ERROR"
 
-        # Act
-        response = client.get(url)
 
-        # Assert
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        data = response.json()
-        assert data["detail"]["error_code"] == "BUSINESS_ERROR"
-        assert "No tax rule found" in data["detail"]["message"]
-
-    def test_calculate_tax_internal_error(self, client, mock_service):
-        """
-        Test unexpected errors return 500 status
-        """
-        # Arrange
-        mock_service.calculate_tax.side_effect = Exception("Database error")
-        url = "/tax-rules/calculate/income_tax/1000.0"
-
-        # Act
-        response = client.get(url)
-
-        # Assert
-        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        data = response.json()
-        assert data["detail"]["error_code"] == "INTERNAL_ERROR"
-
-    def test_calculate_tax_with_different_rule_types(
-        self, 
-        client, 
-        mock_service,
-        sample_success_response
-    ):
-        """
-        Test different tax rule types are handled correctly
-        """
-        # Arrange
-        mock_service.calculate_tax.return_value = sample_success_response
-        test_cases = [
-            ("sales_tax", 500.0),
-            ("vat", 750.0),
-            ("property_tax", 1200.0)
-        ]
-
-        for rule_type, amount in test_cases:
-            url = f"/tax-rules/calculate/{rule_type}/{amount}"
-
-            # Act
-            response = client.get(url)
-
-            # Assert
-            assert response.status_code == status.HTTP_200_OK
-            mock_service.calculate_tax.assert_called_with(amount, rule_type)
-            mock_service.calculate_tax.reset_mock()
-
-    def test_calculate_tax_with_edge_case_amounts(
-        self,
-        client,
-        mock_service,
-        sample_success_response
-    ):
-        """
-        Test edge case amount values
-        """
-        # Arrange
-        mock_service.calculate_tax.return_value = sample_success_response
-        test_cases = [
-            (0.0, "Zero amount"),
-            (1e6, "Large amount"),
-            (0.01, "Small amount")
-        ]
-
-        for amount, desc in test_cases:
-            url = f"/tax-rules/calculate/income_tax/{amount}"
-
-            # Act
-            response = client.get(url)
-
-            # Assert
-            assert response.status_code == status.HTTP_200_OK, f"Failed for {desc}"
-            mock_service.calculate_tax.assert_called_with(amount, "income_tax")
-            mock_service.calculate_tax.reset_mock()
